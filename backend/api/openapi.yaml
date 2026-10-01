@@ -1,0 +1,306 @@
+openapi: 3.0.3
+
+info:
+  title: URL Shortener API
+  version: 1.0.0
+
+paths:
+  /api/v1/links:
+    get:
+      operationId: listLinks
+      summary: List links, newest first
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Page of links
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createLink
+      summary: Create a short link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLinkRequest"
+      responses:
+        "201":
+          description: Link created
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/links/{id}:
+    parameters:
+      - $ref: "#/components/parameters/LinkID"
+    get:
+      operationId: getLink
+      summary: Get a link
+      responses:
+        "200":
+          description: Link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      operationId: updateLink
+      summary: Change destination and/or code of a link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLinkRequest"
+      responses:
+        "200":
+          description: Updated link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Link"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteLink
+      summary: Delete a link
+      responses:
+        "204":
+          description: Link deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /r/{code}:
+    get:
+      operationId: redirect
+      summary: Follow a short link and count the click
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Code"
+      responses:
+        "302":
+          description: Redirect to the original URL
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe, checks the database connection
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "503":
+          description: Database is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+
+components:
+  parameters:
+    LinkID:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+
+  schemas:
+    ID:
+      type: string
+      pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+    Code:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{3,32}$"
+
+    OriginalURL:
+      type: string
+      maxLength: 2048
+      pattern: "^https?://\\S+$"
+
+    Link:
+      type: object
+      required: [id, code, originalUrl, clicks, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        code:
+          $ref: "#/components/schemas/Code"
+        originalUrl:
+          $ref: "#/components/schemas/OriginalURL"
+        clicks:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    LinkPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Link"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    CreateLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [originalUrl]
+      properties:
+        originalUrl:
+          $ref: "#/components/schemas/OriginalURL"
+        code:
+          $ref: "#/components/schemas/Code"
+
+    UpdateLinkRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        originalUrl:
+          $ref: "#/components/schemas/OriginalURL"
+        code:
+          $ref: "#/components/schemas/Code"
+
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+
+    ErrorCode:
+      type: string
+      enum: [bad_request, validation_error, not_found, code_taken, internal_error]
+
+  responses:
+    BadRequest:
+      description: Request does not match the API contract
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Link not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Code is already taken
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

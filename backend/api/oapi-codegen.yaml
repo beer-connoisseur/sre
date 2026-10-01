@@ -1,0 +1,8 @@
+package: api
+generate:
+  gin-server: true
+  models: true
+  embedded-spec: true
+compatibility:
+  always-prefix-enum-values: true
+output: ../generated/api/api.gen.go
