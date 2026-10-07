@@ -1,6 +1,38 @@
+map $request_uri $request_path {
+    ~^(?<path>[^?]*) $path;
+}
+
+map $request_uri $request_query {
+    ~\?(?<query>.*)$ $query;
+    default "";
+}
+
+log_format json escape=json
+    '{'
+        '"time":"$time_iso8601",'
+        '"level":"info",'
+        '"msg":"$request_path",'
+        '"status":$status,'
+        '"method":"$request_method",'
+        '"path":"$request_path",'
+        '"query":"$request_query",'
+        '"ip":"$remote_addr",'
+        '"x-forwarded-for":"$http_x_forwarded_for",'
+        '"user-agent":"$http_user_agent",'
+        '"referer":"$http_referer",'
+        '"latency":$request_time,'
+        '"bytes":$body_bytes_sent,'
+        '"request_id":"$request_id",'
+        '"upstream_addr":"$upstream_addr",'
+        '"upstream_status":"$upstream_status",'
+        '"upstream_latency":"$upstream_response_time"'
+    '}';
+
 server {
     listen 80;
     server_name _;
+
+    access_log /var/log/nginx/access.log json;
 
     root /usr/share/nginx/html;
     index index.html;

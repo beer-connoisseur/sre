@@ -41,7 +41,11 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 
 	router := gin.New()
 	router.Use(
-		ginzap.GinzapWithConfig(logger, &ginzap.Config{UTC: true, DefaultLevel: zapcore.InfoLevel}),
+		ginzap.GinzapWithConfig(logger, &ginzap.Config{
+			UTC:          true,
+			DefaultLevel: zapcore.InfoLevel,
+			SkipPaths:    []string{"/healthz", "/readyz"},
+		}),
 		ginzap.RecoveryWithZap(logger, true),
 		validator,
 	)
