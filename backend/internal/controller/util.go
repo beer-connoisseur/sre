@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
@@ -27,7 +28,11 @@ func convertErrors(err error) (int, api.Error) {
 func (i *serviceImplementation) respondError(c *gin.Context, err error) {
 	status, body := convertErrors(err)
 	if status == http.StatusInternalServerError {
-		i.logger.Error("request failed", zap.String("path", c.Request.URL.Path), zap.Error(err))
+		i.logger.Error("request failed",
+			zap.String("request_id", requestid.Get(c)),
+			zap.String("path", c.Request.URL.Path),
+			zap.Error(err),
+		)
 	}
 
 	c.JSON(status, body)

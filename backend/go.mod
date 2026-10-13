@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/caarlos0/env/v10 v10.0.0
 	github.com/getkin/kin-openapi v0.142.0
+	github.com/gin-contrib/requestid v1.0.8
 	github.com/gin-contrib/zap v1.1.9
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.9.2

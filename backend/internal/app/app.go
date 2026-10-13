@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-contrib/requestid"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,10 +42,14 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 
 	router := gin.New()
 	router.Use(
+		requestid.New(),
 		ginzap.GinzapWithConfig(logger, &ginzap.Config{
 			UTC:          true,
 			DefaultLevel: zapcore.InfoLevel,
 			SkipPaths:    []string{"/healthz", "/readyz"},
+			Context: func(c *gin.Context) []zapcore.Field {
+				return []zapcore.Field{zap.String("request_id", requestid.Get(c))}
+			},
 		}),
 		ginzap.RecoveryWithZap(logger, true),
 		validator,

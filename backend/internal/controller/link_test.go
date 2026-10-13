@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"urlshort/generated/api"
 	"urlshort/internal/controller/middleware"
@@ -24,10 +26,14 @@ import (
 const (
 	linkID      = "0b6c1d8e-7a51-4d2c-9f3e-2a4b5c6d7e8f"
 	originalURL = "https://example.com"
+	requestID   = "req-0123456789"
 )
+
+var requestIDMiddleware gin.HandlerFunc
 
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
+	requestIDMiddleware = requestid.New()
 	os.Exit(m.Run())
 }
 
@@ -35,6 +41,7 @@ type testEnv struct {
 	router  http.Handler
 	useCase *mocks.MocklinkUseCase
 	db      *mocks.Mockpinger
+	logs    *observer.ObservedLogs
 }
 
 func newTestEnv(t *testing.T) testEnv {
@@ -47,11 +54,13 @@ func newTestEnv(t *testing.T) testEnv {
 	validator, err := middleware.OapiValidator()
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(validator)
-	api.RegisterHandlers(router, New(zap.NewNop(), useCase, db))
+	core, logs := observer.New(zap.InfoLevel)
 
-	return testEnv{router: router, useCase: useCase, db: db}
+	router := gin.New()
+	router.Use(requestIDMiddleware, validator)
+	api.RegisterHandlers(router, New(zap.New(core), useCase, db))
+
+	return testEnv{router: router, useCase: useCase, db: db, logs: logs}
 }
 
 func (e testEnv) do(t *testing.T, method, target, body string) *httptest.ResponseRecorder {
@@ -61,6 +70,11 @@ func (e testEnv) do(t *testing.T, method, target, body string) *httptest.Respons
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+
+	return e.serve(req)
+}
+
+func (e testEnv) serve(req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	e.router.ServeHTTP(rec, req)
 
@@ -291,4 +305,34 @@ func TestReadyz(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, rec.Code)
 		})
 	}
+}
+
+func TestRequestID_PassedFromHeaderToResponseAndErrorLog(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.useCase.EXPECT().Get(gomock.Any(), linkID).Return(entity.Link{}, errors.New("db is down"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/links/"+linkID, nil)
+	req.Header.Set("X-Request-ID", requestID)
+	rec := env.serve(req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, requestID, rec.Header().Get("X-Request-ID"))
+
+	entries := env.logs.FilterMessage("request failed").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, requestID, entries[0].ContextMap()["request_id"])
+}
+
+func TestRequestID_GeneratedWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.useCase.EXPECT().Delete(gomock.Any(), linkID).Return(nil)
+
+	rec := env.do(t, http.MethodDelete, "/api/v1/links/"+linkID, "")
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("X-Request-ID"))
 }
