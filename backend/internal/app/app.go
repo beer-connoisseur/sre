@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 
 	"urlshort/generated/api"
 	"urlshort/internal/config"
@@ -33,7 +32,7 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	defer pool.Close()
 
 	linkUseCase := link.NewService(postgres.NewLinkRepository(pool))
-	ctrl := controller.New(logger, linkUseCase, pool)
+	ctrl := controller.New(linkUseCase, pool)
 
 	validator, err := middleware.OapiValidator()
 	if err != nil {
@@ -43,14 +42,7 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	router := gin.New()
 	router.Use(
 		requestid.New(),
-		ginzap.GinzapWithConfig(logger, &ginzap.Config{
-			UTC:          true,
-			DefaultLevel: zapcore.InfoLevel,
-			SkipPaths:    []string{"/healthz", "/readyz"},
-			Context: func(c *gin.Context) []zapcore.Field {
-				return []zapcore.Field{zap.String("request_id", requestid.Get(c))}
-			},
-		}),
+		middleware.AccessLog(logger, "/healthz", "/readyz"),
 		ginzap.RecoveryWithZap(logger, true),
 		validator,
 	)

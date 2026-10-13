@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
 	"urlshort/generated/api"
@@ -57,8 +58,8 @@ func newTestEnv(t *testing.T) testEnv {
 	core, logs := observer.New(zap.InfoLevel)
 
 	router := gin.New()
-	router.Use(requestIDMiddleware, validator)
-	api.RegisterHandlers(router, New(zap.New(core), useCase, db))
+	router.Use(requestIDMiddleware, middleware.AccessLog(zap.New(core), "/healthz", "/readyz"), validator)
+	api.RegisterHandlers(router, New(useCase, db))
 
 	return testEnv{router: router, useCase: useCase, db: db, logs: logs}
 }
@@ -79,6 +80,15 @@ func (e testEnv) serve(req *http.Request) *httptest.ResponseRecorder {
 	e.router.ServeHTTP(rec, req)
 
 	return rec
+}
+
+func (e testEnv) accessLogEntry(t *testing.T) observer.LoggedEntry {
+	t.Helper()
+
+	entries := e.logs.All()
+	require.Len(t, entries, 1)
+
+	return entries[0]
 }
 
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) api.ErrorCode {
@@ -307,7 +317,7 @@ func TestReadyz(t *testing.T) {
 	}
 }
 
-func TestRequestID_PassedFromHeaderToResponseAndErrorLog(t *testing.T) {
+func TestRequestID_PassedFromHeaderToResponseAndAccessLog(t *testing.T) {
 	t.Parallel()
 
 	env := newTestEnv(t)
@@ -319,10 +329,7 @@ func TestRequestID_PassedFromHeaderToResponseAndErrorLog(t *testing.T) {
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Equal(t, requestID, rec.Header().Get("X-Request-ID"))
-
-	entries := env.logs.FilterMessage("request failed").All()
-	require.Len(t, entries, 1)
-	assert.Equal(t, requestID, entries[0].ContextMap()["request_id"])
+	assert.Equal(t, requestID, env.accessLogEntry(t).ContextMap()["request_id"])
 }
 
 func TestRequestID_GeneratedWhenMissing(t *testing.T) {
@@ -335,4 +342,91 @@ func TestRequestID_GeneratedWhenMissing(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	assert.NotEmpty(t, rec.Header().Get("X-Request-ID"))
+}
+
+func TestAccessLog_LevelAndError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		useCase   func(uc *mocks.MocklinkUseCase)
+		method    string
+		target    string
+		body      string
+		wantLevel zapcore.Level
+		wantError string
+	}{
+		{
+			name: "created",
+			useCase: func(uc *mocks.MocklinkUseCase) {
+				uc.EXPECT().Create(gomock.Any(), originalURL, "").Return(entity.Link{ID: linkID}, nil)
+			},
+			method: http.MethodPost, target: "/api/v1/links", body: `{"originalUrl":"` + originalURL + `"}`,
+			wantLevel: zapcore.InfoLevel,
+		},
+		{
+			name:   "validation error",
+			method: http.MethodGet, target: "/api/v1/links/not-a-uuid",
+			wantLevel: zapcore.WarnLevel, wantError: "doesn't match the regular expression",
+		},
+		{
+			name: "code taken",
+			useCase: func(uc *mocks.MocklinkUseCase) {
+				uc.EXPECT().Create(gomock.Any(), originalURL, "taken").Return(entity.Link{}, entity.ErrCodeAlreadyExists)
+			},
+			method: http.MethodPost, target: "/api/v1/links", body: `{"originalUrl":"` + originalURL + `","code":"taken"}`,
+			wantLevel: zapcore.WarnLevel, wantError: entity.ErrCodeAlreadyExists.Error(),
+		},
+		{
+			name: "not found",
+			useCase: func(uc *mocks.MocklinkUseCase) {
+				uc.EXPECT().Resolve(gomock.Any(), "nope").Return("", entity.ErrLinkNotFound)
+			},
+			method: http.MethodGet, target: "/r/nope",
+			wantLevel: zapcore.WarnLevel, wantError: entity.ErrLinkNotFound.Error(),
+		},
+		{
+			name: "internal error",
+			useCase: func(uc *mocks.MocklinkUseCase) {
+				uc.EXPECT().Delete(gomock.Any(), linkID).Return(errors.New("db is down"))
+			},
+			method: http.MethodDelete, target: "/api/v1/links/" + linkID,
+			wantLevel: zapcore.ErrorLevel, wantError: "db is down",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := newTestEnv(t)
+			if tt.useCase != nil {
+				tt.useCase(env.useCase)
+			}
+
+			env.do(t, tt.method, tt.target, tt.body)
+
+			entry := env.accessLogEntry(t)
+			assert.Equal(t, tt.wantLevel, entry.Level)
+
+			fields := entry.ContextMap()
+			if tt.wantError == "" {
+				assert.NotContains(t, fields, "error")
+			} else {
+				assert.Contains(t, fields["error"], tt.wantError)
+			}
+		})
+	}
+}
+
+func TestAccessLog_SkipsProbes(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.db.EXPECT().Ping(gomock.Any()).Return(nil)
+
+	env.do(t, http.MethodGet, "/healthz", "")
+	env.do(t, http.MethodGet, "/readyz", "")
+
+	assert.Empty(t, env.logs.All())
 }

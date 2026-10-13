@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 
 	"urlshort/generated/api"
 	"urlshort/internal/entity"
@@ -34,14 +33,12 @@ type (
 var _ api.ServerInterface = (*serviceImplementation)(nil)
 
 type serviceImplementation struct {
-	logger      *zap.Logger
 	linkUseCase linkUseCase
 	db          pinger
 }
 
-func New(logger *zap.Logger, linkUseCase linkUseCase, db pinger) *serviceImplementation {
+func New(linkUseCase linkUseCase, db pinger) *serviceImplementation {
 	return &serviceImplementation{
-		logger:      logger,
 		linkUseCase: linkUseCase,
 		db:          db,
 	}

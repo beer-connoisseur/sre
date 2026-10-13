@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ func validationErrorHandler(c *gin.Context, message string, statusCode int) {
 		code = api.ErrorCodeNotFound
 	}
 
+	c.Error(errors.New(message))
 	c.AbortWithStatusJSON(statusCode, api.Error{
 		Error: api.ErrorBody{Code: code, Message: message},
 	})
