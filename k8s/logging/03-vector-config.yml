@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: logging
+data:
+  vector.yaml: |
+    data_dir: /vector-data-dir
+
+    api:
+      enabled: true
+      address: 0.0.0.0:8686
+
+    sources:
+      app_logs:
+        type: kubernetes_logs
+        extra_field_selector: metadata.namespace=url-shortener
+
+    transforms:
+      normalize:
+        type: remap
+        inputs: [app_logs]
+        source: |
+          parsed, err = parse_json(.message)
+          if err == null && is_object(parsed) {
+            . = merge(., object!(parsed))
+            del(.message)
+          }
+
+          app = string(.kubernetes.pod_labels.app) ?? ""
+
+          if !exists(."service.name") {
+            ."service.name" = if app == "frontend" {
+              "url-shortener-frontend"
+            } else if app == "backend" || app == "migrate" {
+              "url-shortener-backend"
+            } else {
+              app
+            }
+          }
+
+          if !exists(.level) {
+            line = to_string(.message) ?? ""
+            .level = if match(line, r'\b(ERROR|FATAL|PANIC):') {
+              "error"
+            } else if match(line, r'\bWARNING:') {
+              "warn"
+            } else {
+              "info"
+            }
+          }
+
+          .kubernetes.pod_labels = {"app": app}
+
+          del(.file)
+          del(.source_type)
+          del(.kubernetes.container_id)
+          del(.kubernetes.container_image_id)
+          del(.kubernetes.pod_uid)
+          del(.kubernetes.pod_ips)
+          del(.kubernetes.namespace_labels)
+          del(.kubernetes.node_labels)
+          del(.kubernetes.pod_annotations)
+
+    sinks:
+      victorialogs:
+        type: elasticsearch
+        inputs: [normalize]
+        endpoints:
+        - http://victorialogs:9428/insert/elasticsearch/
+        api_version: v8
+        compression: gzip
+        healthcheck:
+          enabled: false
+        query:
+          _msg_field: msg,message
+          _time_field: time,timestamp
+          _stream_fields: kubernetes.pod_namespace,kubernetes.container_name

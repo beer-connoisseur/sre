@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: victorialogs
+  namespace: logging
+spec:
+  clusterIP: None
+  ports:
+  - name: http
+    port: 9428
+    targetPort: http
+  selector:
+    app: victorialogs
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: victorialogs
+  namespace: logging
+spec:
+  serviceName: victorialogs
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victorialogs
+  template:
+    metadata:
+      labels:
+        app: victorialogs
+    spec:
+      containers:
+      - name: victorialogs
+        image: victoriametrics/victoria-logs:v1.53.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - -storageDataPath=/storage
+        - -retentionPeriod=7d
+        - -httpListenAddr=:9428
+        ports:
+        - name: http
+          containerPort: 9428
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+  volumeClaimTemplates:
+  - metadata:
+      name: storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
