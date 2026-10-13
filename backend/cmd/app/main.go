@@ -18,6 +18,8 @@ import (
 
 var version = "dev"
 
+const serviceName = "url-shortener-backend"
+
 type runFunc func(ctx context.Context, logger *zap.Logger, cfg *config.Config) error
 
 func main() {
@@ -66,7 +68,11 @@ func action(run runFunc) cli.ActionFunc {
 			}
 		}()
 
-		logger = logger.With(zap.String("version", version), zap.String("command", cmd.Name))
+		logger = logger.With(
+			zap.String("service.name", serviceName),
+			zap.String("version", version),
+			zap.String("command", cmd.Name),
+		)
 
 		if err := run(ctx, logger, cfg); err != nil {
 			logger.Error("command failed", zap.Error(err))

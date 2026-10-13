@@ -11,6 +11,7 @@ log_format json escape=json
     '{'
         '"time":"$time_iso8601",'
         '"level":"info",'
+        '"service.name":"url-shortener-frontend",'
         '"msg":"$request_path",'
         '"status":$status,'
         '"method":"$request_method",'
