@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	HTTPPort        string        `env:"HTTP_PORT" envDefault:"8080"`
+	MetricsPort     string        `env:"METRICS_PORT" envDefault:"9090"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
 	LogLevel        string        `env:"LOG_LEVEL" envDefault:"info"`
 

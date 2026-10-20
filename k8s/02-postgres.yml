@@ -27,6 +27,10 @@ spec:
     metadata:
       labels:
         app: postgres
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: postgres
@@ -68,6 +72,49 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /var/lib/postgresql/data
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.20.1
+        ports:
+        - name: metrics
+          containerPort: 9187
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: url-shortener-config
+              key: POSTGRES_DB
+        - name: DATA_SOURCE_URI
+          value: localhost:5432/$(POSTGRES_DB)?sslmode=disable
+        - name: DATA_SOURCE_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: DATA_SOURCE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+        readinessProbe:
+          httpGet:
+            path: /
+            port: metrics
+          periodSeconds: 10
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 20
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
   volumeClaimTemplates:
   - metadata:
       name: data

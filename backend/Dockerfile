@@ -18,7 +18,7 @@ COPY --from=build /out/app /app
 ENV GIN_MODE=release
 
 USER nonroot:nonroot
-EXPOSE 8080
+EXPOSE 8080 9090
 
 ENTRYPOINT ["/app"]
 CMD ["serve"]

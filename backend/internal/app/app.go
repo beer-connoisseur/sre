@@ -12,11 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"urlshort/generated/api"
 	"urlshort/internal/config"
 	"urlshort/internal/controller"
 	"urlshort/internal/controller/middleware"
+	"urlshort/internal/metrics"
 	"urlshort/internal/repository/postgres"
 	"urlshort/internal/usecase/link"
 	"urlshort/migrations"
@@ -31,7 +33,9 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	}
 	defer pool.Close()
 
-	linkUseCase := link.NewService(postgres.NewLinkRepository(pool))
+	registry := metrics.NewRegistry(pool, cfg.PG.DB)
+
+	linkUseCase := link.NewService(postgres.NewLinkRepository(pool), metrics.NewBusiness(registry))
 	ctrl := controller.New(linkUseCase, pool)
 
 	validator, err := middleware.OapiValidator()
@@ -42,43 +46,53 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	router := gin.New()
 	router.Use(
 		requestid.New(),
+		middleware.Metrics(registry),
 		middleware.AccessLog(logger, "/healthz", "/readyz"),
 		ginzap.RecoveryWithZap(logger, true),
 		validator,
 	)
 	api.RegisterHandlers(router, ctrl)
 
-	server := &http.Server{
+	apiServer := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.HTTPPort),
 		Handler:           router,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
+	metricsServer := &http.Server{
+		Addr:              net.JoinHostPort("", cfg.MetricsPort),
+		Handler:           metrics.Handler(registry),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
 
-	serveErr := make(chan error, 1)
-	go func() {
-		logger.Info("http server listening", zap.String("addr", server.Addr))
-		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			serveErr <- err
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error { return listen(logger, "api", apiServer) })
+	group.Go(func() error { return listen(logger, "metrics", metricsServer) })
+	group.Go(func() error {
+		<-groupCtx.Done()
+
+		logger.Info("shutting down, draining connections", zap.Duration("timeout", cfg.ShutdownTimeout))
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+
+		if err := errors.Join(apiServer.Shutdown(shutdownCtx), metricsServer.Shutdown(shutdownCtx)); err != nil {
+			return err
 		}
-		close(serveErr)
-	}()
 
-	select {
-	case err := <-serveErr:
-		return err
-	case <-ctx.Done():
-	}
+		logger.Info("http servers stopped")
 
-	logger.Info("shutdown signal received, draining connections", zap.Duration("timeout", cfg.ShutdownTimeout))
+		return nil
+	})
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
+	return group.Wait()
+}
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
+func listen(logger *zap.Logger, name string, server *http.Server) error {
+	logger.Info("http server listening", zap.String("server", name), zap.String("addr", server.Addr))
+
+	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-
-	logger.Info("http server stopped")
 
 	return nil
 }

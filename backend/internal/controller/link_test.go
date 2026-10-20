@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -43,6 +45,7 @@ type testEnv struct {
 	useCase *mocks.MocklinkUseCase
 	db      *mocks.Mockpinger
 	logs    *observer.ObservedLogs
+	metrics *prometheus.Registry
 }
 
 func newTestEnv(t *testing.T) testEnv {
@@ -56,12 +59,18 @@ func newTestEnv(t *testing.T) testEnv {
 	require.NoError(t, err)
 
 	core, logs := observer.New(zap.InfoLevel)
+	registry := prometheus.NewRegistry()
 
 	router := gin.New()
-	router.Use(requestIDMiddleware, middleware.AccessLog(zap.New(core), "/healthz", "/readyz"), validator)
+	router.Use(
+		requestIDMiddleware,
+		middleware.Metrics(registry),
+		middleware.AccessLog(zap.New(core), "/healthz", "/readyz"),
+		validator,
+	)
 	api.RegisterHandlers(router, New(useCase, db))
 
-	return testEnv{router: router, useCase: useCase, db: db, logs: logs}
+	return testEnv{router: router, useCase: useCase, db: db, logs: logs, metrics: registry}
 }
 
 func (e testEnv) do(t *testing.T, method, target, body string) *httptest.ResponseRecorder {
@@ -89,6 +98,37 @@ func (e testEnv) accessLogEntry(t *testing.T) observer.LoggedEntry {
 	require.Len(t, entries, 1)
 
 	return entries[0]
+}
+
+func (e testEnv) requestCount(t *testing.T, method, route, status string) uint64 {
+	t.Helper()
+
+	families, err := e.metrics.Gather()
+	require.NoError(t, err)
+
+	for _, family := range families {
+		if family.GetName() != "http_request_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if hasLabels(metric, map[string]string{"method": method, "route": route, "status": status}) {
+				return metric.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+
+	return 0
+}
+
+func hasLabels(metric *dto.Metric, want map[string]string) bool {
+	matched := 0
+	for _, label := range metric.GetLabel() {
+		if value, ok := want[label.GetName()]; ok && value == label.GetValue() {
+			matched++
+		}
+	}
+
+	return matched == len(want)
 }
 
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) api.ErrorCode {
@@ -429,4 +469,25 @@ func TestAccessLog_SkipsProbes(t *testing.T) {
 	env.do(t, http.MethodGet, "/readyz", "")
 
 	assert.Empty(t, env.logs.All())
+}
+
+func TestMetrics_RouteTemplateAndStatus(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t)
+	env.useCase.EXPECT().Resolve(gomock.Any(), "abc").Return(originalURL, nil)
+	env.useCase.EXPECT().Resolve(gomock.Any(), "xyz").Return(originalURL, nil)
+	env.useCase.EXPECT().Resolve(gomock.Any(), "missing").Return("", entity.ErrLinkNotFound)
+
+	env.do(t, http.MethodGet, "/r/abc", "")
+	env.do(t, http.MethodGet, "/r/xyz", "")
+	env.do(t, http.MethodGet, "/r/missing", "")
+	env.do(t, http.MethodPost, "/api/v1/links", `{"originalUrl":"not a url"}`)
+	env.do(t, http.MethodGet, "/no/such/route", "")
+
+	assert.Equal(t, uint64(2), env.requestCount(t, http.MethodGet, "/r/:code", "302"))
+	assert.Equal(t, uint64(1), env.requestCount(t, http.MethodGet, "/r/:code", "404"))
+	assert.Equal(t, uint64(1), env.requestCount(t, http.MethodPost, "/api/v1/links", "400"))
+	assert.Equal(t, uint64(1), env.requestCount(t, http.MethodGet, "unmatched", "404"))
+	assert.Equal(t, uint64(0), env.requestCount(t, http.MethodGet, "/r/abc", "302"))
 }
