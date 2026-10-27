@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/IBM/pgxpoolprometheus"
 	"github.com/gin-contrib/requestid"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
@@ -19,12 +20,16 @@ import (
 	"urlshort/internal/controller"
 	"urlshort/internal/controller/middleware"
 	"urlshort/internal/metrics"
+	"urlshort/internal/prober"
 	"urlshort/internal/repository/postgres"
 	"urlshort/internal/usecase/link"
 	"urlshort/migrations"
 )
 
-const readHeaderTimeout = 5 * time.Second
+const (
+	readHeaderTimeout = 5 * time.Second
+	proberUserAgent   = "urlshort-prober"
+)
 
 func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	pool, err := pgxpool.New(ctx, cfg.PostgresURL())
@@ -33,7 +38,7 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	}
 	defer pool.Close()
 
-	registry := metrics.NewRegistry(pool, cfg.PG.DB)
+	registry := metrics.NewRegistry(pgxpoolprometheus.NewCollector(pool, map[string]string{"db_name": cfg.PG.DB}))
 
 	linkUseCase := link.NewService(postgres.NewLinkRepository(pool), metrics.NewBusiness(registry))
 	ctrl := controller.New(linkUseCase, pool)
@@ -49,9 +54,14 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 		middleware.Metrics(registry),
 		middleware.AccessLog(logger, "/healthz", "/readyz"),
 		ginzap.RecoveryWithZap(logger, true),
+		middleware.Chaos(cfg.Chaos.ErrorRate, cfg.Chaos.Latency, "/healthz", "/readyz"),
 		validator,
 	)
 	api.RegisterHandlers(router, ctrl)
+
+	if cfg.Chaos.ErrorRate > 0 || cfg.Chaos.Latency > 0 {
+		logger.Warn("chaos enabled", zap.Float64("error_rate", cfg.Chaos.ErrorRate), zap.Duration("latency", cfg.Chaos.Latency))
+	}
 
 	apiServer := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.HTTPPort),
@@ -64,18 +74,55 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
+	return serve(ctx, logger, cfg.ShutdownTimeout, map[string]*http.Server{"api": apiServer, "metrics": metricsServer})
+}
+
+func Probe(ctx context.Context, logger *zap.Logger, cfg *config.Prober) error {
+	registry := metrics.NewRegistry()
+
+	p, err := prober.New(cfg.TargetURL, proberUserAgent, cfg.Timeout, logger, registry)
+	if err != nil {
+		return err
+	}
+
+	metricsServer := &http.Server{
+		Addr:              net.JoinHostPort("", cfg.MetricsPort),
+		Handler:           metrics.Handler(registry),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+
+	logger.Info("prober started", zap.String("target", cfg.TargetURL), zap.Duration("interval", cfg.Interval))
+
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.Go(func() error { return listen(logger, "api", apiServer) })
-	group.Go(func() error { return listen(logger, "metrics", metricsServer) })
+	group.Go(func() error {
+		p.Run(groupCtx, cfg.Interval)
+		return nil
+	})
+	group.Go(func() error {
+		return serve(groupCtx, logger, cfg.ShutdownTimeout, map[string]*http.Server{"metrics": metricsServer})
+	})
+
+	return group.Wait()
+}
+
+func serve(ctx context.Context, logger *zap.Logger, shutdownTimeout time.Duration, servers map[string]*http.Server) error {
+	group, groupCtx := errgroup.WithContext(ctx)
+	for name, server := range servers {
+		group.Go(func() error { return listen(logger, name, server) })
+	}
 	group.Go(func() error {
 		<-groupCtx.Done()
 
-		logger.Info("shutting down, draining connections", zap.Duration("timeout", cfg.ShutdownTimeout))
+		logger.Info("shutting down, draining connections", zap.Duration("timeout", shutdownTimeout))
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
-		if err := errors.Join(apiServer.Shutdown(shutdownCtx), metricsServer.Shutdown(shutdownCtx)); err != nil {
+		errs := make([]error, 0, len(servers))
+		for _, server := range servers {
+			errs = append(errs, server.Shutdown(shutdownCtx))
+		}
+		if err := errors.Join(errs...); err != nil {
 			return err
 		}
 

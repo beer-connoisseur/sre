@@ -20,7 +20,9 @@ var version = "dev"
 
 const serviceName = "url-shortener-backend"
 
-type runFunc func(ctx context.Context, logger *zap.Logger, cfg *config.Config) error
+type leveled interface {
+	Level() string
+}
 
 func main() {
 	cmd := &cli.Command{
@@ -32,12 +34,17 @@ func main() {
 			{
 				Name:   "serve",
 				Usage:  "run HTTP server",
-				Action: action(app.Serve),
+				Action: action(config.New, app.Serve),
 			},
 			{
 				Name:   "migrate",
 				Usage:  "apply database migrations and exit",
-				Action: action(app.Migrate),
+				Action: action(config.New, app.Migrate),
+			},
+			{
+				Name:   "probe",
+				Usage:  "run synthetic prober against the service",
+				Action: action(config.NewProber, app.Probe),
 			},
 		},
 	}
@@ -51,14 +58,14 @@ func main() {
 	}
 }
 
-func action(run runFunc) cli.ActionFunc {
+func action[C leveled](load func() (C, error), run func(context.Context, *zap.Logger, C) error) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) (err error) {
-		cfg, err := config.New()
+		cfg, err := load()
 		if err != nil {
 			return cli.Exit(fmt.Sprintf("invalid config: %s", err), 1)
 		}
 
-		logger, err := newLogger(cfg.LogLevel)
+		logger, err := newLogger(cfg.Level())
 		if err != nil {
 			return cli.Exit(fmt.Sprintf("invalid log level: %s", err), 1)
 		}
@@ -103,6 +110,7 @@ func newLogger(level string) (*zap.Logger, error) {
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.EncoderConfig.TimeKey = "time"
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	cfg.DisableStacktrace = true
 
 	return cfg.Build()
 }

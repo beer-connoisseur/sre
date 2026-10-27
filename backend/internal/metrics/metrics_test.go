@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IBM/pgxpoolprometheus"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -61,14 +62,14 @@ func TestBusiness_Counters(t *testing.T) {
 	assert.InDelta(t, 1, testutil.ToFloat64(b.redirects.WithLabelValues(redirectNotFound)), 0)
 }
 
-func TestHandler_ExposesRuntimePoolAndBusinessMetrics(t *testing.T) {
+func TestHandler_ExposesRuntimeExtraAndBusinessMetrics(t *testing.T) {
 	t.Parallel()
 
 	pool, err := pgxpool.New(t.Context(), "postgres://user:password@localhost:1/db")
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
-	reg := NewRegistry(pool, "shortener")
+	reg := NewRegistry(pgxpoolprometheus.NewCollector(pool, map[string]string{"db_name": "shortener"}))
 	NewBusiness(reg).LinkCreated(false)
 
 	server := httptest.NewServer(Handler(reg))

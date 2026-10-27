@@ -24,10 +24,40 @@ type Config struct {
 		SSLMode  string `env:"POSTGRES_SSLMODE" envDefault:"disable"`
 		MaxConns int    `env:"POSTGRES_MAX_CONNS" envDefault:"10"`
 	}
+
+	Chaos struct {
+		ErrorRate float64       `env:"CHAOS_ERROR_RATE" envDefault:"0"`
+		Latency   time.Duration `env:"CHAOS_LATENCY" envDefault:"0s"`
+	}
+}
+
+type Prober struct {
+	TargetURL       string        `env:"PROBER_TARGET_URL,required,notEmpty"`
+	Interval        time.Duration `env:"PROBER_INTERVAL" envDefault:"10s"`
+	Timeout         time.Duration `env:"PROBER_TIMEOUT" envDefault:"3s"`
+	MetricsPort     string        `env:"METRICS_PORT" envDefault:"9090"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	LogLevel        string        `env:"LOG_LEVEL" envDefault:"info"`
 }
 
 func New() (*Config, error) {
-	var cfg Config
+	return parse[Config]()
+}
+
+func NewProber() (*Prober, error) {
+	return parse[Prober]()
+}
+
+func (c *Config) Level() string {
+	return c.LogLevel
+}
+
+func (c *Prober) Level() string {
+	return c.LogLevel
+}
+
+func parse[T any]() (*T, error) {
+	var cfg T
 	if err := env.Parse(&cfg); err != nil {
 		return nil, err
 	}
