@@ -1,0 +1,24 @@
+persistence:
+  enabled: true
+  size: 1Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1
+    memory: 768Mi
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: VictoriaMetrics
+      uid: victoriametrics
+      type: prometheus
+      access: proxy
+      url: http://vm-single-victoria-metrics-single-server:8428
+      isDefault: true
+      jsonData:
+        timeInterval: 15s
