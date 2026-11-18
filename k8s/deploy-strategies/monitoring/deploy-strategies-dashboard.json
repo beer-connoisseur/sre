@@ -1,0 +1,110 @@
+{
+  "dashboard": {
+    "uid": "deploy-strategies",
+    "title": "URL Shortener — Deployment Strategies (Gateway API)",
+    "tags": ["url-shortener", "deploy-strategies"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "editable": true,
+    "refresh": "5s",
+    "time": { "from": "now-30m", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "RPS по версиям",
+        "description": "sum(rate(http_requests_total[2m])) by (version) — на этом графике видна разница стратегий: плавная рампа rolling/canary, прямоугольная ступенька blue/green, ровный violet v2 при shadow.",
+        "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+        "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+          },
+          "overrides": []
+        },
+        "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "sum by (version) (rate(http_requests_total{namespace=\"url-shortener\"}[2m]))",
+            "legendFormat": "{{version}}"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "type": "timeseries",
+        "title": "Доля трафика по версиям, %",
+        "description": "100 * RPS версии / суммарный RPS. Canary 90/10 → 50/50 → 0/100 выглядит как лестница, blue/green — скачок 0→100, A/B — почти плоские 100/0 (заголовочные запросы не видны без заголовка).",
+        "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+        "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+          },
+          "overrides": []
+        },
+        "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "100 * sum by (version) (rate(http_requests_total{namespace=\"url-shortener\"}[2m])) / sum (rate(http_requests_total{namespace=\"url-shortener\"}[2m]))",
+            "legendFormat": "{{version}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "type": "timeseries",
+        "title": "Реплики по версиям",
+        "description": "count by (version) (urlshort_build_info) — сколько подов каждой версии сейчас отвечает в /metrics.",
+        "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "staircase": true }
+          },
+          "overrides": []
+        },
+        "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "count by (version) (urlshort_build_info{namespace=\"url-shortener\"})",
+            "legendFormat": "{{version}}"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "type": "timeseries",
+        "title": "Задержка p95 по версиям",
+        "description": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[2m])) by (version) — растёт ли хвост у новой версии (главный сигнал для решения на каждом шаге canary).",
+        "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+          },
+          "overrides": []
+        },
+        "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "histogram_quantile(0.95, sum by (le, version) (rate(http_request_duration_seconds_bucket{namespace=\"url-shortener\"}[2m])))",
+            "legendFormat": "{{version}}"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

@@ -64,7 +64,7 @@ func newTestEnv(t *testing.T) testEnv {
 	router := gin.New()
 	router.Use(
 		requestIDMiddleware,
-		middleware.Metrics(registry),
+		middleware.Metrics(registry, "test"),
 		middleware.AccessLog(zap.New(core), "/healthz", "/readyz"),
 		validator,
 	)

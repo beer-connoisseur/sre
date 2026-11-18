@@ -1,0 +1,15 @@
+# BLUE/GREEN — весь трафик на «зелёную» (старую) версию 1.0.0.
+# Обе версии задеплоены и готовы, но пользователи — на green.
+# Мгновенное переключение на blue: применить httproute-blue.yaml (тот же HTTPRoute).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend
+  namespace: url-shortener
+spec:
+  parentRefs:
+    - name: eg
+  rules:
+    - backendRefs:
+        - name: backend-v1   # green
+          port: 8080

@@ -1,0 +1,17 @@
+# CANARY — шаг 2: 50/50. Применяем, когда метрики и логи 2.0.0 на 10% выглядят здоровыми.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend
+  namespace: url-shortener
+spec:
+  parentRefs:
+    - name: eg
+  rules:
+    - backendRefs:
+        - name: backend-v1
+          port: 8080
+          weight: 50
+        - name: backend-v2
+          port: 8080
+          weight: 50

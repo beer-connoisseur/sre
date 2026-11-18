@@ -11,7 +11,7 @@ import (
 
 const unmatchedRoute = "unmatched"
 
-func Metrics(reg prometheus.Registerer) gin.HandlerFunc {
+func Metrics(reg prometheus.Registerer, version string) gin.HandlerFunc {
 	factory := promauto.With(reg)
 
 	inFlight := factory.NewGauge(prometheus.GaugeOpts{
@@ -23,6 +23,10 @@ func Metrics(reg prometheus.Registerer) gin.HandlerFunc {
 		Help:    "Duration of HTTP requests by route template and status.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route", "status"})
+	requests := factory.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests by version, route template and status.",
+	}, []string{"version", "method", "route", "status"})
 
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -35,9 +39,13 @@ func Metrics(reg prometheus.Registerer) gin.HandlerFunc {
 		if route == "" {
 			route = unmatchedRoute
 		}
+		status := strconv.Itoa(c.Writer.Status())
 
 		duration.
-			WithLabelValues(c.Request.Method, route, strconv.Itoa(c.Writer.Status())).
+			WithLabelValues(c.Request.Method, route, status).
 			Observe(time.Since(start).Seconds())
+		requests.
+			WithLabelValues(version, c.Request.Method, route, status).
+			Inc()
 	}
 }

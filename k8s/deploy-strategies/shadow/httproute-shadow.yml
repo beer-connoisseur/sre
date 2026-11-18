@@ -1,0 +1,28 @@
+# SHADOW / MIRROR — зеркалирование копии трафика на новую версию.
+# Пользовательский трафик идёт на 1.0.0, ответ приходит с неё. При этом КОПИЯ
+# каждого запроса уходит на 2.0.0 — она получает реальную нагрузку (запись в ту же
+# базу!), но её ответы пользователю не возвращаются.
+#
+# Наблюдение: traffic.sh показывает только X-Version: 1.0.0, но в метриках
+# http_requests_total{version="2.0.0"} и логах подов backend-v2 виден тот же RPS.
+#
+# Проверено вживую на Envoy Gateway v1.10: RequestMirror работает со стандартными
+# CRD Gateway API (experimental-канал не нужен).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend
+  namespace: url-shortener
+spec:
+  parentRefs:
+    - name: eg
+  rules:
+    - backendRefs:
+        - name: backend-v1   # отвечает пользователю
+          port: 8080
+      filters:
+        - type: RequestMirror
+          requestMirror:
+            backendRef:
+              name: backend-v2   # получает копию трафика, ответ отбрасывается
+              port: 8080

@@ -1,0 +1,73 @@
+# ROLLING — шаг 2: накатываем версию 2.0.0 на тот же Deployment `backend`.
+# Меняются image и метка version на подах; Service и HTTPRoute не трогаем.
+# Kubernetes поднимает новый под (maxSurge=1), ждёт Ready, гасит старый —
+# и так по одному, пока все реплики не станут 2.0.0 (maxUnavailable=0 — без простоя).
+# Откат: kubectl rollout undo deployment/backend -n url-shortener
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: url-shortener
+  labels:
+    app: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: "2.0.0"   # новая версия — старые (1.0.0) и новые (2.0.0) поды
+                            # различимы в метриках http_requests_total{version=...}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: backend
+        image: url-shortener-backend:2.0.0
+        imagePullPolicy: IfNotPresent
+        args: ["serve"]
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        envFrom:
+        - configMapRef:
+            name: url-shortener-config
+        - secretRef:
+            name: postgres-credentials
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          # Небольшая задержка готовности — чтобы постепенную замену подов
+          # было видно в kubectl get pods -w и на графике, а не мгновенно.
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 1
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

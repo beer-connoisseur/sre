@@ -23,6 +23,7 @@ import (
 	"urlshort/internal/prober"
 	"urlshort/internal/repository/postgres"
 	"urlshort/internal/usecase/link"
+	"urlshort/internal/version"
 	"urlshort/migrations"
 )
 
@@ -38,7 +39,10 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	}
 	defer pool.Close()
 
+	build := version.Get()
+
 	registry := metrics.NewRegistry(pgxpoolprometheus.NewCollector(pool, map[string]string{"db_name": cfg.PG.DB}))
+	metrics.NewBuildInfo(registry, build)
 
 	linkUseCase := link.NewService(postgres.NewLinkRepository(pool), metrics.NewBusiness(registry))
 	ctrl := controller.New(linkUseCase, pool)
@@ -51,7 +55,8 @@ func Serve(ctx context.Context, logger *zap.Logger, cfg *config.Config) error {
 	router := gin.New()
 	router.Use(
 		requestid.New(),
-		middleware.Metrics(registry),
+		middleware.Version(build),
+		middleware.Metrics(registry, build),
 		middleware.AccessLog(logger, "/healthz", "/readyz"),
 		ginzap.RecoveryWithZap(logger, true),
 		middleware.Chaos(cfg.Chaos.ErrorRate, cfg.Chaos.Latency, "/healthz", "/readyz"),

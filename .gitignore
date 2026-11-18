@@ -9,3 +9,5 @@ dist/
 *.zip
 backend/generated/
 mocks/
+
+*.sh

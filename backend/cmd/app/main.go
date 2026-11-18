@@ -14,9 +14,8 @@ import (
 
 	"urlshort/internal/app"
 	"urlshort/internal/config"
+	"urlshort/internal/version"
 )
-
-var version = "dev"
 
 const serviceName = "url-shortener-backend"
 
@@ -28,7 +27,7 @@ func main() {
 	cmd := &cli.Command{
 		Name:           "urlshort",
 		Usage:          "URL shortener service, configured via environment variables",
-		Version:        version,
+		Version:        version.Get(),
 		DefaultCommand: "serve",
 		Commands: []*cli.Command{
 			{
@@ -77,7 +76,7 @@ func action[C leveled](load func() (C, error), run func(context.Context, *zap.Lo
 
 		logger = logger.With(
 			zap.String("service.name", serviceName),
-			zap.String("version", version),
+			zap.String("version", version.Get()),
 			zap.String("command", cmd.Name),
 		)
 

@@ -9,7 +9,7 @@ COPY . .
 RUN go generate ./api/...
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/app ./cmd/app
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X urlshort/internal/version.version=${VERSION}" -o /out/app ./cmd/app
 
 FROM gcr.io/distroless/static-debian12:nonroot
 

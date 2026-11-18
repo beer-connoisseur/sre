@@ -1,0 +1,26 @@
+# Gateway API поверх Envoy Gateway.
+# GatewayClass `eg` обслуживается контроллером Envoy Gateway
+# (controllerName: gateway.envoyproxy.io/gatewayclass-controller).
+#
+# Gateway `eg` поднимает Envoy-прокси (data-plane) в namespace envoy-gateway-system.
+# Локальный доступ — через port-forward на сервис прокси (см. traffic.sh):
+# на minikube LoadBalancer без `minikube tunnel` остаётся в Pending.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: eg
+  namespace: url-shortener
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      # allowedRoutes по умолчанию разрешает HTTPRoute из того же namespace.
