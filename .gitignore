@@ -11,3 +11,5 @@ backend/generated/
 mocks/
 
 *.sh
+
+*.ps1
